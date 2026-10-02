@@ -3,32 +3,44 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 
-import { IMessagePreambleRegistry } from '@jupyter/chat';
+import { IComponentsRendererFactory } from 'jupyter-chat-components';
 
-import { ToolCallsComponent } from './tool-calls';
+import { submitPermissionDecision } from './request';
+
+const TOOL_CALL_COMPONENTS_PLUGIN_ID =
+  '@jupyter-ai/acp-client:tool-call-components';
 
 /**
- * Plugin registering the ACP tool-call UI (tool calls, permission requests,
- * diffs) with the message preamble registry, so it renders above agent
- * messages.
+ * Plugin that wires ACP-specific callbacks into jupyter-chat-components so
+ * grouped tool call MIME bundles can open files and resolve permissions.
  */
-export const toolCallsPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter-ai/acp-client:tool-calls',
-  description: 'Renders ACP tool calls in chat message preambles.',
+export const toolCallComponentsPlugin: JupyterFrontEndPlugin<void> = {
+  id: TOOL_CALL_COMPONENTS_PLUGIN_ID,
+  description:
+    'Connects ACP grouped tool call actions to jupyter-chat-components.',
   autoStart: true,
-  optional: [IMessagePreambleRegistry],
+  requires: [IComponentsRendererFactory],
   activate: (
     app: JupyterFrontEnd,
-    preambleRegistry: IMessagePreambleRegistry | null
+    componentsRendererFactory: IComponentsRendererFactory
   ) => {
-    if (preambleRegistry) {
-      preambleRegistry.addComponent(ToolCallsComponent);
-    } else {
-      console.warn(
-        '[ACP] IMessagePreambleRegistry not available — tool call UI disabled'
-      );
-    }
+    componentsRendererFactory.addCallbacks({
+      toolCallPermissionDecision: submitPermissionDecision,
+      openToolCallPath: (path: string) => {
+        // The component sends a server-relative path. A leading '/' means
+        // the file is outside the server root and cannot be opened.
+        if (path.startsWith('/')) {
+          return;
+        }
+
+        app.commands
+          .execute('docmanager:open', { path })
+          .catch((error: unknown) => {
+            console.error(`Failed to open tool call path: ${path}`, error);
+          });
+      }
+    });
   }
 };
 
-export default [toolCallsPlugin];
+export default [toolCallComponentsPlugin];
